@@ -23,7 +23,6 @@ func main() {
 	}
 
 	defer utils.Logger.Sync()
-
 	utils.Logger.Info("MOTO 启动...")
 	// single-sided build: no accelerator init required
 	wg := &sync.WaitGroup{}
