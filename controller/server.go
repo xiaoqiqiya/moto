@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"github.com/patrickmn/go-cache"
 	"moto/config"
 	"moto/utils"
 	"net"
@@ -10,10 +9,12 @@ import (
 	"time"
 )
 
-var ipCache = cache.New(30*time.Second, 1*time.Minute)
-
+// Listen 根据规则启动 TCP 监听，做基础限流并分发到对应模式。
 func Listen(rule *config.Rule, wg *sync.WaitGroup) {
 	defer wg.Done()
+	if rule.Prewarm {
+		initPrewarm(rule)
+	}
 	//监听
 	listener, err := net.Listen("tcp", rule.Listen)
 	if err != nil {
@@ -37,20 +38,6 @@ func Listen(rule *config.Rule, wg *sync.WaitGroup) {
 				utils.Logger.Info(rule.Name + " disconnected ip in blacklist: " + clientIP)
 				conn.Close()
 				continue
-			}
-		}
-		//todo: WAF策略：限制单一IP 30秒内请求不能超过200次, no debug,wait fix
-		clientIP := conn.RemoteAddr().String()
-		clientIP = clientIP[0:strings.LastIndex(clientIP, ":")]
-		if count, found := ipCache.Get(clientIP); found && count.(int) >= 200 {
-			utils.Logger.Warn("WAF: too many requests from " + clientIP)
-			conn.Close()
-			continue
-		} else {
-			if found {
-				ipCache.Increment(clientIP, 1)
-			} else {
-				ipCache.Set(clientIP, 1, cache.DefaultExpiration)
 			}
 		}
 		//选择运行模式

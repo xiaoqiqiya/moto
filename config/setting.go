@@ -8,10 +8,10 @@ import (
 	"regexp"
 )
 
+// projectConfig 保存从 setting.json 读取的顶层配置。
 type projectConfig struct {
 	Log   log     `json:"log"`
 	Rules []*Rule `json:"rules"`
-	Wafs  []*Waf  `json:"wafs"`
 }
 
 type log struct {
@@ -21,18 +21,12 @@ type log struct {
 	Date    string `json:"date"`
 }
 
-type Waf struct {
-	Name         string   `json:"name"`
-	Blackcountry []string `json:"blackcountry"`
-	Threshold    uint64   `json:"threshold"`
-	Findtime     uint64   `json:"findtime"`
-	Bantime      uint64   `json:"bantime"`
-}
-
+// Rule 描述一个监听端口以及接入流量的路由策略。
 type Rule struct {
 	Name    string `json:"name"`
 	Listen  string `json:"listen"`
 	Mode    string `json:"mode"`
+	Prewarm bool   `json:"prewarm"`
 	Targets []*struct {
 		Regexp  string         `json:"regexp"`
 		Re      *regexp.Regexp `json:"-"`
@@ -42,12 +36,13 @@ type Rule struct {
 	Blacklist map[string]bool `json:"blacklist"`
 }
 
-// (single-sided mode) accelerator and loss adaptation are removed
+// （单边模式）已移除加速端和丢包自适应的旧配置。
 
+// GlobalCfg 指向全局生效的配置对象。
 var GlobalCfg *projectConfig
 
 func init() {
-	// Support env override for config file path
+	// 支持通过环境变量覆盖配置文件路径
 	path := os.Getenv("MOTO_CONFIG")
 	if path == "" {
 		path = "config/setting.json"
@@ -70,25 +65,9 @@ func init() {
 			fmt.Printf("verify rule failed at pos %d : %s\n", i, err.Error())
 		}
 	}
-
-	for i, v := range GlobalCfg.Wafs {
-		if v.Name == "" {
-			fmt.Printf("empty waf name at pos %d\n", i)
-		}
-		if v.Threshold == 0 {
-			fmt.Printf("invalid threshold at pos %d\n", i)
-		}
-		if v.Findtime == 0 {
-			fmt.Printf("invalid findtime at pos %d\n", i)
-		}
-		if v.Bantime == 0 {
-			fmt.Printf("invalid bantime at pos %d\n", i)
-		}
-		fmt.Println(v)
-	}
 }
 
-// Reload loads configuration from the given path and applies defaults/validation.
+// Reload 从指定路径重载配置，并执行默认值填充与校验。
 func Reload(path string) error {
 	buf, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -106,25 +85,11 @@ func Reload(path string) error {
 			fmt.Printf("verify rule failed at pos %d : %s\n", i, err.Error())
 		}
 	}
-	for i, v := range cfg.Wafs {
-		if v.Name == "" {
-			fmt.Printf("empty waf name at pos %d\n", i)
-		}
-		if v.Threshold == 0 {
-			fmt.Printf("invalid threshold at pos %d\n", i)
-		}
-		if v.Findtime == 0 {
-			fmt.Printf("invalid findtime at pos %d\n", i)
-		}
-		if v.Bantime == 0 {
-			fmt.Printf("invalid bantime at pos %d\n", i)
-		}
-		fmt.Println(v)
-	}
 	GlobalCfg = cfg
 	return nil
 }
 
+// verify 校验规则配置，并在需要时编译正则。
 func (c *Rule) verify() error {
 	if c.Name == "" {
 		return fmt.Errorf("empty name")

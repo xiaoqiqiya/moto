@@ -5,40 +5,20 @@
     "version": "1.0.1",
     "date": "2024-07-23"
   },
-  "wafs": [
-    {
-      "name": "限制单位时间内总请求次数@threshold",
-      "blackcountry": [
-        "US"
-      ],
-      "threshold": 200,
-      "findtime": 30,
-      "bantime": 86400
-    },
-    {
-      "name": "限制单位时间内总数据量@threshold",
-      "blackcountry": [
-        "TW",
-        "US"
-      ],
-      "threshold": 10240,
-      "findtime": 30,
-      "bantime": 86400
-    }
-  ],
   "rules": [
     {
       "name": "正常模式",
       "listen": ":81",
       "mode": "normal",
-      "timeout": 3000,
+      "prewarm": false,
+      "timeout": 60000,
       "blacklist": null,
       "targets": [
         {
-          "address": "1.1.1.1:85"
+          "address": "www.baidu.com:80"
         },
         {
-          "address": "2.2.2.2:85"
+          "address": "www.baidu.com:80"
         }
       ]
     },
@@ -46,16 +26,17 @@
       "name": "正则模式",
       "listen": ":82",
       "mode": "regex",
-      "timeout": 3000,
+      "prewarm": false,
+      "timeout": 60000,
       "blacklist": null,
       "targets": [
         {
           "regexp": "^(GET|POST|HEAD|DELETE|PUT|CONNECT|OPTIONS|TRACE)",
-          "address": "1.1.1.1:80"
+          "address": "www.baidu.com:80"
         },
         {
           "regexp": "^SSH",
-          "address": "2.2.2.2:22"
+          "address": "www.baidu.com:22"
         }
       ]
     },
@@ -63,14 +44,15 @@
       "name": "智能加速",
       "listen": ":83",
       "mode": "boost",
-      "timeout": 300,
+      "prewarm": true,
+      "timeout": 60000,
       "blacklist": null,
       "targets": [
         {
-          "address": "1.1.1.1:85"
+          "address": "www.baidu.com:80"
         },
         {
-          "address": "2.2.2.2:85"
+          "address": "www.baidu.com:80"
         }
       ]
     },
@@ -78,14 +60,15 @@
       "name": "轮询模式",
       "listen": ":84",
       "mode": "roundrobin",
-      "timeout": 300,
+      "prewarm": true,
+      "timeout": 60000,
       "blacklist": null,
       "targets": [
         {
-          "address": "1.1.1.1:85"
+          "address": "www.baidu.com:80"
         },
         {
-          "address": "2.2.2.2:85"
+          "address": "www.baidu.com:80"
         }
       ]
     }
