@@ -17,17 +17,21 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.21'
+          go-version: '1.25.13'
+          cache: true
+          cache-dependency-path: go.sum
 
       - name: Build for ${{ matrix.platform.name }}
         run: |
           mkdir -p ./bin
-          GOOS=${{ matrix.platform.os }} GOARCH=${{ matrix.platform.arch }} go build -o ./bin/myapp${{ matrix.platform.ext }} ./run.go
+          GOOS=${{ matrix.platform.os }} GOARCH=${{ matrix.platform.arch }} go build -o ./bin/myapp${{ matrix.platform.ext }} .
           echo "✅ Built: ./bin/myapp${{ matrix.platform.ext }}"
 
       - name: Package for ${{ matrix.platform.name }}
