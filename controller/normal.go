@@ -1,7 +1,8 @@
 package controller
 
 import (
-	"io"
+	"context"
+	"errors"
 	"moto/config"
 	"moto/utils"
 	"net"
@@ -10,46 +11,108 @@ import (
 	"go.uber.org/zap"
 )
 
-// HandleNormal 会依次尝试各个目标，并在成功的连接上挂载自适应的单边加速。
-func HandleNormal(conn net.Conn, rule *config.Rule) {
+// HandleNormal 会依次尝试各个目标，并在首个连接成功的目标上转发流量。
+func HandleNormal(ctx context.Context, conn net.Conn, rule *config.Rule) {
+	defaultRoutingRuntime.handleNormal(ctx, conn, rule)
+}
+
+func (runtime *routingRuntime) handleNormal(ctx context.Context, conn net.Conn, rule *config.Rule) {
+	if conn == nil || rule == nil || len(rule.Targets) == 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	defer conn.Close()
+	defer failPendingSOCKS5(conn)
+	dialCtx := ctx
+	cancelDial := func() {}
+	if rule.Timeout > 0 {
+		dialCtx, cancelDial = context.WithTimeout(ctx, time.Duration(rule.Timeout)*time.Millisecond)
+	}
+	defer cancelDial()
 
 	var target net.Conn
-	//正常模式下挨个连接直到成功连接
-	for _, v := range rule.Targets {
-		c, err := outboundDial(v.Address)
+	var targetAttempt routeAttempt
+	var dialFailures []error
+	lastFailedTarget := ""
+	targetAttempts := 0
+	targetAttemptLimit := connectProxyTargetAttemptLimit(rule)
+	tryCapacityFallback := false
+	for _, candidate := range rule.Targets {
+		if targetAttempts >= targetAttemptLimit {
+			break
+		}
+		targetAttempts++
+		candidateConn, attempt, err := runtime.outboundDialRouteWithOptions(
+			dialCtx, rule, candidate.Address, tryCapacityFallback, nil,
+		)
 		if err != nil {
-			utils.Logger.Error("无法建立连接，尝试下一个目标",
-				zap.String("ruleName", rule.Name),
-				zap.String("remoteAddr", conn.RemoteAddr().String()),
-				zap.String("targetAddr", v.Address))
+			dialFailures = append(dialFailures, err)
+			lastFailedTarget = candidate.Address
+			if isDialBulkheadError(err) {
+				if isDialTargetBulkheadSaturation(err) {
+					tryCapacityFallback = true
+					utils.Logger.Debug("目标拨号容量已满，尝试其他目标",
+						zap.String("ruleName", rule.Name),
+						zap.String("targetAddr", candidate.Address))
+					continue
+				}
+				utils.Logger.Debug("前台拨号容量暂时不可用，结束当前连接",
+					zap.String("ruleName", rule.Name),
+					zap.String("remoteAddr", connAddr(conn)),
+					zap.String("targetAddr", candidate.Address),
+					zap.Error(err))
+				return
+			}
+			if rule.Protocol != config.ProtocolSOCKS5 {
+				utils.Logger.Error("无法建立连接，尝试下一个目标",
+					zap.String("ruleName", rule.Name),
+					zap.String("remoteAddr", connAddr(conn)),
+					zap.String("targetAddr", candidate.Address),
+					zap.Error(err))
+			}
 			continue
 		}
-		if tc, ok := c.(*net.TCPConn); ok {
-			_ = tc.SetNoDelay(true)
-			_ = tc.SetKeepAlive(true)
-			_ = tc.SetKeepAlivePeriod(30 * time.Second)
+		configureTCP(candidateConn)
+		if err := writeOutboundProxyProtocolContext(dialCtx, candidateConn, conn, rule); err != nil {
+			routeReportFailure(attempt, err, time.Now())
+			_ = candidateConn.Close()
+			utils.Logger.Error("写入 PROXY protocol 头失败，尝试下一个目标",
+				zap.String("ruleName", rule.Name),
+				zap.String("targetAddr", candidate.Address),
+				zap.Error(err))
+			continue
 		}
-		target = c
+		target = candidateConn
+		targetAttempt = attempt
 		break
 	}
 	if target == nil {
-		utils.Logger.Error("所有目标均连接失败，无法处理连接",
-			zap.String("ruleName", rule.Name),
-			zap.String("remoteAddr", conn.RemoteAddr().String()))
+		finalErr := errors.Join(dialFailures...)
+		if rule.Protocol == config.ProtocolSOCKS5 {
+			setPendingSOCKS5Failure(conn, finalErr)
+			logConnectProxyFailure(rule, lastFailedTarget, finalErr, "所有原生代理目标均连接失败")
+		} else {
+			utils.Logger.Error("所有目标均连接失败，无法处理连接",
+				zap.String("ruleName", rule.Name),
+				zap.String("remoteAddr", connAddr(conn)))
+		}
 		return
 	}
-	utils.Logger.Debug("建立连接",
-		zap.String("ruleName", rule.Name),
-		zap.String("remoteAddr", conn.RemoteAddr().String()),
-		zap.String("targetAddr", target.RemoteAddr().String()))
-
 	defer target.Close()
+	if err := markSOCKS5Connected(conn); err != nil {
+		return
+	}
 
-	go func() {
-		io.Copy(conn, target)
-		conn.Close()
-		target.Close()
-	}()
-	io.Copy(target, conn)
+	if entry := utils.Logger.Check(zap.DebugLevel, "建立连接"); entry != nil {
+		entry.Write(
+			zap.String("ruleName", rule.Name),
+			zap.String("remoteAddr", connAddr(conn)),
+			zap.String("targetAddr", connAddr(target)))
+	}
+
+	result := relayBidirectional(ctx, conn, target)
+	logRelayResult(rule, conn, target, result)
+	reportRouteRelay(targetAttempt, result)
 }
