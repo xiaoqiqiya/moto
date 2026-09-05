@@ -127,4 +127,4 @@ func run() error {
 				zap.Strings("listenersRemoved", result.Removed))
 		}
 	}
-	}
+}
